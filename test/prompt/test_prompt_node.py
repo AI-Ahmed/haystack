@@ -1,13 +1,14 @@
 import os
 import logging
 from typing import Optional, Union, List, Dict, Any, Tuple
-from unittest.mock import patch, Mock
+from unittest.mock import patch, Mock, MagicMock
 
 import pytest
+from transformers import AutoTokenizer, GenerationConfig
 
 from haystack import Document, Pipeline, BaseComponent, MultiLabel
 from haystack.nodes.prompt import PromptTemplate, PromptNode, PromptModel
-from haystack.nodes.prompt.providers import HFLocalInvocationLayer
+from haystack.nodes.prompt.invocation_layer import HFLocalInvocationLayer
 
 
 def skip_test_for_invalid_key(prompt_model):
@@ -202,6 +203,54 @@ def test_invalid_template_params():
 
 
 @pytest.mark.integration
+def test_generation_kwargs_from_prompt_node_init():
+    the_question = "What does 42 mean?"
+    # test that generation_kwargs are passed to the underlying HF model
+    node = PromptNode(model_kwargs={"generation_kwargs": {"do_sample": True}})
+    with patch.object(node.prompt_model.model_invocation_layer.pipe, "run_single", MagicMock()) as mock_call:
+        node(the_question)
+        mock_call.assert_called_with(
+            the_question, {}, {"do_sample": True, "num_return_sequences": 1, "num_beams": 1, "max_length": 100}, {}
+        )
+
+    # test that generation_kwargs in the form of GenerationConfig are passed to the underlying HF model
+    node = PromptNode(model_kwargs={"generation_kwargs": GenerationConfig(do_sample=True, top_p=0.9)})
+    with patch.object(node.prompt_model.model_invocation_layer.pipe, "run_single", MagicMock()) as mock_call:
+        node(the_question)
+        mock_call.assert_called_with(
+            the_question,
+            {},
+            {"do_sample": True, "top_p": 0.9, "num_return_sequences": 1, "num_beams": 1, "max_length": 100},
+            {},
+        )
+
+
+@pytest.mark.integration
+def test_generation_kwargs_from_prompt_node_call():
+    the_question = "What does 42 mean?"
+    # default node with local HF model
+    node = PromptNode()
+    with patch.object(node.prompt_model.model_invocation_layer.pipe, "run_single", MagicMock()) as mock_call:
+        # test that generation_kwargs are passed to the underlying HF model
+        node(the_question, generation_kwargs={"do_sample": True})
+        mock_call.assert_called_with(
+            the_question, {}, {"do_sample": True, "num_return_sequences": 1, "num_beams": 1, "max_length": 100}, {}
+        )
+
+    # default node with local HF model
+    node = PromptNode()
+    with patch.object(node.prompt_model.model_invocation_layer.pipe, "run_single", MagicMock()) as mock_call:
+        # test that generation_kwargs in the form of GenerationConfig are passed to the underlying HF model
+        node(the_question, generation_kwargs=GenerationConfig(do_sample=True, top_p=0.9))
+        mock_call.assert_called_with(
+            the_question,
+            {},
+            {"do_sample": True, "top_p": 0.9, "num_return_sequences": 1, "num_beams": 1, "max_length": 100},
+            {},
+        )
+
+
+@pytest.mark.integration
 @pytest.mark.parametrize("prompt_model", ["hf", "openai", "azure"], indirect=True)
 def test_stop_words(prompt_model):
     # TODO: This can be a unit test for StopWordCriteria
@@ -251,6 +300,30 @@ def test_stop_words(prompt_model):
     # with custom prompt template and stop words set in kwargs (overrides PN stop words)
     r = node.prompt(tt, documents=["Berlin is the capital of Germany."], stop_words=None)
     assert "capital" in r[0] or "Germany" in r[0]
+
+
+@pytest.mark.unit
+def test_prompt_node_model_max_length(caplog):
+    prompt = "This is a prompt " * 5  # (26 tokens with t5 flan tokenizer)
+
+    # test that model_max_length is set to 1024
+    # test that model doesn't truncate the prompt if it is shorter than
+    # the model max length minus the length of the output
+    # no warning is raised
+    node = PromptNode(model_kwargs={"model_max_length": 1024})
+    assert node.prompt_model.model_invocation_layer.pipe.tokenizer.model_max_length == 1024
+    with caplog.at_level(logging.WARNING):
+        node.prompt(prompt)
+        assert len(caplog.text) <= 0
+
+    # test that model_max_length is set to 10
+    # test that model truncates the prompt if it is longer than the max length (10 tokens)
+    # a warning is raised
+    node = PromptNode(model_kwargs={"model_max_length": 10})
+    assert node.prompt_model.model_invocation_layer.pipe.tokenizer.model_max_length == 10
+    with caplog.at_level(logging.WARNING):
+        node.prompt(prompt)
+        assert "The prompt has been truncated from 26 tokens to 0 tokens" in caplog.text
 
 
 @pytest.mark.unit
