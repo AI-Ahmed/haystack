@@ -175,7 +175,7 @@ class Agent:
         self.tools = {tool.name: tool for tool in tools} if tools else {}
         self.tool_names = ", ".join(self.tools.keys())
         self.tool_names_with_descriptions = "\n".join(
-            [f"{tool.name}: {tool.description}" for tool in self.tools.values()]
+            [f"{tool.name}– {tool.description}" for tool in self.tools.values()]
         )
         self.max_steps = max_steps
         self.tool_pattern = tool_pattern
