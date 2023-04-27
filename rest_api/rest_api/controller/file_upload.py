@@ -87,4 +87,7 @@ def upload_file(
     for preprocessor in preprocessors:
         params[preprocessor.name] = preprocessor_params.dict()
 
+    # We have to filter the params from None or duplicated variables or values
+    params = dict(zip(params.keys(), list(map(lambda key: {i:v for i, v in key.items() if v != None}, params.values()))))
+
     indexing_pipeline.run(file_paths=file_paths, meta=file_metas, params=params)
